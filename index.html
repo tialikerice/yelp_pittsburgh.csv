@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/topojson.v3.min.js"></script>
+    <title>Yelp Business Finder For Pittsburgh</title>
+</head>
+<body style="background-color: #EBECE2">
+<br>
+<div style = "text-align: center;">
+    <h1 style="color: darkslategray;">Yelp Business Finder For Pittsburgh</h1>
+    <h3 style="color: darkslategray;">
+
+    </h3>
+
+    <h3 style="color: darkslategray;">
+        <span id="type-text">Filter by Type:</span>
+        <select id="type-selector">
+            <option value="none">---</option>
+            <option value="food">Food</option>
+            <option value="arts">Arts</option>
+            <option value="nightlife">Nightlife</option>
+            <option value="shopping">Shopping</option>
+            <option value="active">Active</option>
+        </select>
+        <span id="star-text">Filter by Star:</span>
+        <select id="star-selector">
+            <option value="none">---</option>
+            <option value=1>★</option>
+            <option value=2>★★</option>
+            <option value=3>★★★</option>
+            <option value=4>★★★★</option>
+            <option value=5>★★★★★</option>
+        </select>
+        <span id="category-text" style="visibility: hidden;">Filter by Food Category:</span>
+        <select id="category-selector" style="visibility: hidden;">
+        </select>
+    </h3>
+    <svg id="leftCardTop" height="50" width="300" style="margin:5px; background-color:antiquewhite;text-align: center;border: 2px solid black;">
+        <text text x="35%" y="50%" font-size="20" fill="black" font-weight="bold">Overview</text>
+    </svg>
+    <svg id="choroplethTop" height="50" width="600" style="margin:5px; background-color:#fcf5f2;border: 2px solid black;" >
+        <text text x="45%" y="50%" font-size="20" fill="black" font-weight="bold"> Main Map</text>
+        <text text x="5%" y="80%" font-size="15" fill="black" font-weight="bold"> Zoom in and out of the map or hover/click on the circles to access more information. </text>
+    </svg>
+    <svg id="rightCardTop" height="50" width="300" style="margin:5px; background-color:antiquewhite;text-align: center;border: 2px solid black;" >
+        <text text x="20%" y="50%" font-size="20" fill="black" font-weight="bold"> Business Details Card </text>
+        <text text x="5%" y="80%" font-size="15" fill="black" font-weight="bold"> Click on the name to the business web page </text>
+    </svg>
+    <svg id="leftCard" height="550" width="300" style="margin:5px; background-color:antiquewhite;text-align: center;border: 2px solid black;">
+        <svg id="scatterplot" x="0" y="0" height="260" width="280" ></svg>
+        <svg id="barchart" x="0" y="270" height="260" width="280"></svg>
+    </svg>
+    <svg id="choropleth" height="550" width="600" style="margin:5px; background-color:#fcf5f2;border: 2px solid black;" ></svg>
+    <svg id="rightCard" height="550" width="300" style="margin:5px; background-color:antiquewhite;text-align: center;border: 2px solid black;" ></svg>
+
+</div>
+<br>
+</body>
+
+<script>
+    // left card
+    const margin3 = { top: 20, right: 10, bottom: 30, left:10};
+    const scatterPlot = d3.select("#scatterplot");
+    const scatterWidth = scatterPlot.attr("width");
+    const scatterHeight = scatterPlot.attr("height");
+    const barChart = d3.select("#barchart");
+    const barWidth = barChart.attr("width");
+    const barHeight = barChart.attr("height");
+
+    // right card
+    let selectedCircle = null;
+    const svg2 = d3.select("#rightCard");
+    const width2 = svg2.attr("width");
+    const height2 = svg2.attr("height");
+    const margin2 = { top: 20, right: 20, bottom: 20, left:20};
+    const vpWidth2 = width2 - margin2.left - margin2.right;
+    const vpHeight2 = height2 - margin2.top - margin2.bottom;
+    const viewport2 = svg2.append("g")
+        .attr("transform","translate("+margin2.left+","+margin2.top+")");
+    // Map
+    const svg = d3.select("#choropleth");
+    const width = svg.attr("width");
+    const height = svg.attr("height");
+    const margin = { top: 20, right: 20, bottom: 20, left:20};
+    const vpWidth = width - margin.left - margin.right;
+    const vpHeight = height - margin.top - margin.bottom;
+    const viewport = svg.append("g")
+        .attr("transform","translate("+margin.left+","+margin.top+")");
+    function wrap(text, width) {
+        text.each(function () {
+            var text = d3.select(this),
+                words = text.text().split(/\s+/).reverse(),
+                word,
+                line = [],
+                lineNumber = 0,
+                lineHeight = 1.1, // ems
+                x = text.attr("x"),
+                y = text.attr("y"),
+                dy = 0, //parseFloat(text.attr("dy")),
+                tspan = text.text(null)
+                    .append("tspan")
+                    .attr("x", x)
+                    .attr("y", y)
+                    .attr("dy", dy + "em");
+            while (word = words.pop()) {
+                line.push(word);
+                tspan.text(line.join(" "));
+                if (tspan.node().getComputedTextLength() > width) {
+                    line.pop();
+                    tspan.text(line.join(" "));
+                    line = [word];
+                    tspan = text.append("tspan")
+                        .attr("x", x)
+                        .attr("y", y)
+                        .attr("dy", ++lineNumber * lineHeight + dy + "em")
+                        .text(word);
+                }
+            }
+        });
+    }
+
+    const requestData = async function() {
+
+        const pittsData = await d3.csv('yelp_pittsburgh.csv');
+        const pittsGeo = await d3.json("pittsburgh_neighborhoods.json");
+        const icon_list = await d3.json("icon_list.json");
+
+        let dataID = 0;
+        pittsData.forEach( (d) => {
+            d['rating'] = Number(d['rating']);
+            d['review_count'] = Number(d['review count']);
+            d['latitude'] = Number(d['latitude']);
+            d['longitude'] = Number(d['longitude']);
+            d['id'] = dataID;
+            dataID++;
+        });
+
+        // Draw Left Card
+        // Scatter Plot
+        const xScatterScale = d3.scaleLinear()
+            .domain([0, 5])
+            .range([margin3.left+40, scatterWidth-margin3.right]);
+        const yScatterScale = d3.scaleLinear()
+            .domain([0, d3.max(pittsData, d => d.review_count)])
+            .range([scatterHeight-margin3.bottom-10, margin3.top]);
+        const xScatterAxis = d3.axisBottom(xScatterScale);
+
+        scatterPlot.append("g")
+                .attr("transform", `translate(0, ${scatterHeight - margin3.bottom-10})`)
+                .call(xScatterAxis);
+
+        const yScatterAxis = d3.axisLeft(yScatterScale);
+
+        scatterPlot.append("g")
+                .attr("transform", `translate(${margin3.left+ 40}, 0)`)
+                .call(yScatterAxis);
+
+        let scatterDots = scatterPlot.append('g')
+            .selectAll("circle")
+            .data(pittsData)
+            .join("circle")
+            .attr("id", d => ("id_" + d.id))
+            .attr("cx", d => xScatterScale(d.rating))
+            .attr("cy", d => yScatterScale(d.review_count))
+            .attr("r", 0)
+            .style("fill", "antiquewhite")
+            .attr("transform", `translate(0, -5)`);
+        // define the transition
+        const transition = d3.transition()
+            .duration(750)
+            .ease(d3.easeLinear);
+        // add a transition to the circles
+        scatterDots.transition(transition)
+            .attr("cx", d => xScatterScale(d.rating))
+            .attr("cy", d => yScatterScale(d.review_count))
+            .attr("r", 5)
+            .style("fill", "#acc864");
+
+        // Axis labels:
+        scatterPlot.append("text")
+            .attr("text-anchor", "end")
+            .attr("font-size", "15")
+            .attr("x", scatterWidth/2+40)
+            .attr("y", scatterHeight-5 )
+            .text("Rating");
+        scatterPlot.append("text")
+            .attr("text-anchor", "end")
+            .attr("font-size", "15")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -scatterHeight/2+55 )
+            .attr("y", margin3.left+10)
+            .text("Number of Reviews");
+
+        // Barchart
+        // Count by type
+        let countType = {};
+        pittsData.forEach(function(d) {
+            if(countType[d.type]) {
+                countType[d.type]++;
+            } else {
+                countType[d.type] = 1;
+            }
+        });
+        let dataBar = Object.keys(countType).map(function(key) {
+            return {type: key, count: countType[key]};
+        });
+
+        const xBarScale = d3.scaleBand()
+            .domain(dataBar.map(d => d.type))
+            .range([margin3.left+40, barWidth-10]).padding(0.1);
+
+        const yBarScale = d3.scaleLinear()
+            .domain([0, d3.max(dataBar, d => d.count)])
+            .range([barHeight, margin3.top+30]);
+
+        const xBarAxis = d3.axisBottom(xBarScale);
+
+        barChart.append("g")
+            .attr("transform", `translate(0, ${barHeight - margin3.bottom})`)
+            .call(xBarAxis);
+
+        const yBarAxis = d3.axisLeft(yBarScale);
+
+        barChart.append("g")
+                .attr("transform", `translate(${margin3.left+40}, -30)`)// move the y-axis to the left
+                .call(yBarAxis);
+
+        barChart.selectAll("rect")
+            .data(dataBar)
+            .join("rect")
+            .attr("id", d => ("type_" + d.type))
+            .attr("x",d => xBarScale(d.type))
+            .attr("width", xBarScale.bandwidth())
+            .style("fill", "#acc864")
+            .attr("transform", `translate(0, -30)`)
+            .attr("y", barHeight)
+            .attr("height", 0)
+            .transition() // bar animation
+            .duration(650)
+                .attr("y", d => yBarScale(d.count))
+                .attr("height", d => barHeight - yBarScale(d.count));
+
+        // Axis labels:
+        barChart.append("text")
+            .attr("text-anchor", "end")
+            .attr("font-size", "15")
+            .attr("x", barWidth/2+40)
+            .attr("y", barHeight-3 )
+            .text("Category");
+        barChart.append("text")
+            .attr("text-anchor", "end")
+            .attr("font-size", "15")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -barHeight/2+55 )
+            .attr("y", margin3.left+10)
+            .text("Number of Businesses");
+
+        // highlight scatter plot and barchart
+        function updateLeftCard(id, type) {
+            // TitleText.text("Business: " + name);
+            // update scatter plot
+            let circleID = "#id_" + id;
+            scatterPlot.selectAll("circle")
+                .attr("r", 5)
+                .style("opacity", 0.8)
+                .style("stroke", "none")
+                .style("fill", "#acc864")
+            scatterPlot.selectAll(circleID).raise()
+                .attr("r", 8)
+                .style("opacity", 1)
+                .style("stroke-width", 2)
+                .style("stroke", "white")
+                .style("fill", "#FDB10B")
+            // update barchart
+            let rectID = "#type_" + type;
+            barChart.selectAll("rect")
+                // .attr("r", 5)
+                .style("opacity", 1)
+                .style("stroke", "none")
+                // .attr("width", xBarScale.bandwidth())
+                .style("fill", "#acc864")
+            barChart.selectAll(rectID).raise()
+                // .attr("r", 8)
+                // .style("opacity", 1)
+                .style("stroke-width", 2)
+                .style("stroke", "white")
+                // .attr("width", xBarScale.bandwidth())
+                .style("fill", "#FDB10B")
+        }
+
+        // Draw Map
+        let pittsNeighborhoods = topojson.feature(pittsGeo, pittsGeo.objects.Neighborhoods_);
+        let projection = d3.geoMercator().fitSize([vpWidth, vpHeight], pittsNeighborhoods);
+        let path = d3.geoPath().projection(projection);
+
+        viewport.selectAll("path")
+            .data(pittsNeighborhoods.features)
+            .join("path")
+            .attr("fill", "white") //no stroke
+            .attr("fill", "#d3e29d") //no stroke
+            .attr("stroke", "white")
+            .attr("stroke-width", 1.8)
+            .attr("d", d => path(d.geometry));
+
+        pittsData.forEach( d => {
+            d.Position = projection( [d.longitude, d.latitude] );
+        });
+
+        // Draw Right Card
+        const nameText = viewport2.append("text")
+            .attr("x", 5)
+            .attr("y", 15)
+            .attr("class", "link")
+            .attr("font-size", "20px")
+            .attr("fill", "black")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0)
+            .style("font-family", "sans-serif")
+            .style("font-weight", "bold")
+            .call(wrap, 400);
+        const myImage = viewport2.append("image")
+            .attr("x", width2/4)
+            .attr("y", 50)
+            .attr("width", 100)
+            .attr("height", 100);
+        const type = viewport2.append("image")
+            .attr("x", width2/4)
+            .attr("y", height/2.7)
+            .attr("width", 40)
+            .attr("height", 40);
+        const categories = viewport2.append("image")
+            .attr("x", width2/2)
+            .attr("y", height/2.7)
+            .attr("width", 40)
+            .attr("height", 40);
+        const typeText = viewport2.append("text")
+            .attr("x", width2/4)
+            .attr("y", height/2.1)
+            .attr("font-size", "13px")
+            .attr("fill", "black")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0)
+            .style("font-family", "sans-serif");
+        const categoriesText = viewport2.append("text")
+            .attr("x", width2/2)
+            .attr("y", height/2.1)
+            .attr("font-size", "13px")
+            .attr("fill", "black")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0)
+            .style("font-family", "sans-serif");
+        const star = viewport2.append("image")
+            .attr("x", width2/6)
+            .attr("y", height/3.5)
+            .attr("width", 150)
+            .attr("height", 40);
+        const review_count = viewport2.append("text")
+            .attr("x", 5)
+            .attr("y", height/1.75)
+            .attr("font-size", "18px")
+            .attr("fill", "black")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0);
+        const location = viewport2.append("text")
+            .attr("x", 5)
+            .attr("y", height/1.9)
+            .attr("font-size", "18px")
+            .attr("fill", "black")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0);
+        const snippetTitle = viewport2.append("text")
+            .attr("x", 5)
+            .attr("y", height/1.6)
+            .attr("font-size", "18px")
+            .attr("fill", "white")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("opacity", 0)
+            .style("font-weight", "bold");
+        const snippet = viewport2.append("text")
+            .attr("x", 5)
+            .attr("y", height/1.5)
+            .attr("font-size", "18px")
+            .attr("fill", "white")
+            .style("word-wrap","break-word;")
+            .style("text-align", "center")
+            .style("font-style", "italic")
+            .style("opacity", 0);
+        const bgRect = viewport2.append("rect")
+            .attr("x", 0)
+            .attr("y", height/1.7);
+        const tooltip = d3.select("body").append("div")
+            .attr("class", "tooltip")
+            .style("position", "absolute")
+            .style("pointer-events", "none")
+            .style("opacity", 0)
+            .style("background-color", "pink")
+            .style("padding", "8px");
+
+        var zoom = d3.zoom()
+            .scaleExtent([1, 8])
+            .on('zoom', function(event) {
+                viewport.selectAll('path')
+                    .attr('transform', event.transform);
+                viewport.selectAll('circle')
+                    .attr('transform', event.transform)
+                viewport.selectAll('text')
+                    .attr('transform', event.transform);
+            });
+        svg.call(zoom);
+
+        // Add dropdown menu
+        let typeSelector = d3.select("#type-selector");
+        typeSelector.on("change", update);
+
+        let starSelector = d3.select("#star-selector");
+        starSelector.on("change", update);
+
+        let categorySelector = d3.select("#category-selector");
+        let categoryText = d3.select("#category-text");
+
+        // generate list of options for category
+        let categoryOptions = pittsData
+            .map((d) => d.category)
+            .filter((value, index, self) => self.indexOf(value) === index)
+            .filter(d => !["active", "shopping", "nightlife", "arts"].includes(d));
+
+        // add to select tag
+        let optionHTML = "";
+        optionHTML += `<option value="none">---</option>`
+        for (let i = 0; i < categoryOptions.length; i++) {
+            optionHTML += `<option value="${categoryOptions[i]}">${categoryOptions[i]}</option>`;
+        }
+        categorySelector.html(optionHTML);
+        categorySelector.on("change", update);
+
+        let circles  = "empty"
+        let zoomLevel = d3.zoomTransform(svg.node());
+
+        function update() {
+            let filteredData = pittsData;
+            // update type
+            let selectedType = typeSelector.node().value;
+            if (selectedType != "none") {
+                filteredData = filteredData.filter(function(d) { return d.type === selectedType; });
+            }
+            if (selectedType != "food") {
+                // categorySelector.node().previousSibling.style.display = "none";
+                categoryText.style("visibility", "hidden");
+                categorySelector.style("visibility", "hidden");
+            } else {
+                categoryText.style("visibility", "visible");
+                categorySelector.style("visibility", "visible")
+            }
+
+            // update star
+            let selectedStar = starSelector.node().value;
+            if (selectedStar != "none") {
+                filteredData = filteredData.filter(function(d) { return d.rating === Number(selectedStar); });
+            }
+
+            // update category
+            let selectedCategory = categorySelector.node().value;
+            if (selectedCategory != "none") {
+                filteredData = filteredData.filter(function(d) { return d.category === selectedCategory; });
+            }
+
+            let circleSize = 4;
+            if (circles != "empty") { zoomLevel = d3.zoomTransform(svg.node()); }
+
+            // dots
+            circles = viewport.selectAll("circle").data(filteredData, d => d.Position);
+            circles.exit().remove();
+            let mapCircles = circles.enter()
+                .append("circle")
+                .attr("r", circleSize)
+                .attr("opacity", 0.7)
+                .merge(circles)
+                .style("fill", "#275362")
+                .attr("cx", d => d.Position[0])
+                .attr("cy", d => d.Position[1])
+                .on("mouseover", (event, d)  => {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", 0.9);
+                    tooltip.html(`<span style="font-weight:bold;">Name: </span> ${d.name}<br><span style="font-weight:bold;">Type: </span> ${d.type}<br><span style="font-weight:bold;">Category: </span> ${d.category}<br>`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 20) + "px");
+                    d3.select(event.currentTarget).style("cursor", "pointer").attr("stroke", "#EA592A").attr("stroke-width", "7px");
+                })
+                .on("mouseout", () => {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", 0);
+                    d3.select(event.currentTarget).style("cursor", "default").attr("stroke", "None").attr("stroke-width", "0");
+                })
+                .on("click", (event, d) => {
+                    if (selectedCircle !== null) {
+                        selectedCircle.attr("fill", "#275362");
+                        updateLeftCard(d.id, d.type); // update the scatterplot and barchart
+                    }
+                    d3.select(event.currentTarget)
+                        .attr("fill", "red");
+                    selectedCircle = d3.select(event.currentTarget);
+
+                // create a tooltip element and position it relative to the mouse pointer
+                const imageName = `${d.type}.png`;
+                const typeImage = icon_list[d.category];
+                nameText.text(d.name)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                nameText.on("mouseover", (event, d)  => {
+                    d3.select(event.currentTarget).style("cursor", "pointer")
+                        .style("fill", "blue");
+                })
+                    .on("mouseout", (event, d) => {
+                        d3.select(event.currentTarget).style("cursor", "default")
+                            .style("fill", "black");
+                    })
+                nameText.on("click", () => {
+                    window.open(d.url, "_blank");
+                });
+                myImage.attr("xlink:href", d.image_url)
+                    .transition()
+                    .style("opacity", 1);
+                type.attr("xlink:href", imageName)
+                    .transition()
+                    .style("opacity", 1);
+                categories.attr("xlink:href", typeImage)
+                    .transition()
+                    .style("opacity", 1);
+                typeText.text(d.type)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                categoriesText.text(d.category)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                bgRect.transition()
+                    .style("opacity", 1) // assuming font-size is 18px
+                    .attr("width", "260")
+                    .attr("height", "180")
+                    .attr("fill", "#FDB10B")
+                snippetTitle
+                    .text("Highlighted Comment:")
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                snippet.text(d.snippet)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                snippet.raise();
+                snippetTitle.raise();
+                review_count.text('Review Count: ' + d.review_count)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+                /* rate.text('Rate: ' + d.rating)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250); */
+                star.attr("xlink:href", `${d.rating}.png`)
+                    .transition()
+                    .style("opacity", 1);
+                location.text('Location: ' + d.neighborhood)
+                    .transition()
+                    .style("opacity", 1)
+                    .call(wrap, 250);
+            });
+            viewport.call(zoom.transform, zoomLevel);
+        }
+        // Draw initial circles
+        update();
+    }
+
+    requestData();
+</script>
+</html>
